@@ -1,7 +1,17 @@
 use getopts::Options;
 use core_affinity;
 
-pub fn verarbeiten(eingabe: &Vec<String>) 
+#[derive(Debug)]
+pub struct Settings 
+{
+    pub kerne: Vec<u32>,    // Kerne für das Pinning
+    pub n: Vec<u32>,        // Eingabegrößen für Benchmarking
+    pub threads: u32,       // Anzahl der Threads
+    pub log: String,        // Name der Logdatei
+    pub flagge: bool,       // Debug-Flagge
+}
+
+pub fn verarbeiten(eingabe: &[String]) -> Settings
 {
     // getopt Einstellungen
     let mut parameter: Options = Options::new();
@@ -14,15 +24,7 @@ pub fn verarbeiten(eingabe: &Vec<String>)
     parameter.optflag("f", "", "");
     parameter.optflag("h", "", "");
 
-    // Test-Einstellungen
-    let test_args: Vec<String> = vec![      
-        "-a".into(), "12-18".into(),         
-        "-b".into(), "[4,5,6]".into(),
-        "-c".into(), "4".into(),   
-        "-d".into(), "log".into(),
-        "-f".into(),
-        ];
-    let gefunden = parameter.parse(&test_args).unwrap();
+    let gefunden = parameter.parse(&eingabe[1..]).unwrap();
 
     // Hilfe ausgeben
     if gefunden.opt_present("h") 
@@ -63,7 +65,7 @@ pub fn verarbeiten(eingabe: &Vec<String>)
     // Parameter f parsen
     let flagge: bool = gefunden.opt_present("f");
 
-    (kerne, n, threads, log, flagge)
+        Settings { kerne, n, threads, log, flagge }
 }
 
 /*

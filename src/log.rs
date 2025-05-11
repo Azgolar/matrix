@@ -1,5 +1,6 @@
 use std::{fs::{OpenOptions, read_to_string}, io::Write};
 use core_affinity;
+use crate::eingabe::Settings;
 
 struct ProzessorSpecs 
 {
@@ -50,22 +51,16 @@ impl ProzessorSpecs
 }
 
 /// Speichert die Prozessorinformationen, Eingabegrößen n und die Laufzeiten in eine Datei
-pub fn speichern(name: &str, threads: &str, n: &str, laufzeit: &str) 
+pub fn speichern(einstellungen: &Settings, laufzeit: &Vec<f64>) 
 {
 
     // Prozessorinformationen
     let prozessor: ProzessorSpecs = ProzessorSpecs::new();
     let infos: String = format!("{},{},{},{}", prozessor.name, prozessor.logisch, prozessor.physisch, prozessor.threads);
 
-    let threads: u32 = threads.parse::<u32>().unwrap();
-
-    // Stings in Vektor umwandeln
-    let n: Vec<u32> = n.split(',').map(str::trim).map(|a| a.parse().unwrap()).collect();
-    let laufzeit: Vec<f64> = laufzeit.split(',').map(str::trim).map(|a| a.parse().unwrap()).collect();
-
     // erstellen der Zeilen
-        let mut zeilen: Vec<String> = n.iter().zip(laufzeit.iter())
-        .map(|(a, b)| format!("{},{},{}", threads, a, b)).collect();
+        let mut zeilen: Vec<String> = einstellungen.n.iter().zip(laufzeit.iter())
+        .map(|(a, b)| format!("{},{},{}", einstellungen.threads, a, b)).collect();
 
     // Prozessorinformationen zuerst
     zeilen.insert(0, infos.to_string());
@@ -74,7 +69,7 @@ pub fn speichern(name: &str, threads: &str, n: &str, laufzeit: &str)
     let inhalt: String = zeilen.join("\n");
 
     // In Datei schreiben (nach letzte Zeile einfügen)
-    let mut datei = OpenOptions::new().create(true).append(true).open(name)
+    let mut datei = OpenOptions::new().create(true).append(true).open(&einstellungen.log)
         .unwrap_or_else(|f| 
             { 
                 println!("Konnte Datei nicht öffnen: {}", f);
