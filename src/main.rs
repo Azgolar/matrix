@@ -1,7 +1,7 @@
-mod log;
-mod eingabe;
-use std::{time::Instant, thread};
+mod verarbeiten;
+use std::{time::Instant, thread, process};
 use rand::{Rng, SeedableRng, rngs::StdRng};
+use core_affinity::get_core_ids;
 
 /*
     Single Thread
@@ -69,66 +69,71 @@ fn zufall_matrix(n: usize, rng: &mut StdRng) -> Vec<Vec<f64>>
 
 fn main() 
 {
-    //let gefunden = parameter.parse(&env::args()
-          //  .skip(1).collect::<Vec<_>>()).unwrap_or_else(|e| 
-           // { Einstellungen::fehlerausgabe(&format!("Fehler beim Parsen des Arguments: {}", e))});
+    // let args: Vec<String> = std::env::args().collect();
 
-
-        // Test-Einstellungen
+    // Test-Einstellungen
     let test: Vec<String> = vec![
-        "-a".into(), "12-18".into(),
-        "-b".into(), "4,5,6".into(),
-        "-c".into(), "4".into(),
-        "-d".into(), "logfile.txt".into(),
-        "-f".into(),
+        "-n".into(), "4-6".into(),
+        "-c".into(), "ergebnis.txt".into(),
+        "-d".into(),
     ];
 
     // Nutzereingabe parsen
-    let einstellungen: eingabe::Settings = eingabe::verarbeiten(&test);
+    let (n, datei, debug): (Vec<u32>, String, bool) = verarbeiten::verarbeiten(&test)
+        .unwrap_or_else(|fehler| {
+                println!("\n{}\n", fehler);
+                process::exit(1);
+            });
 
     // struct Debug Ausgabe
-    if einstellungen.flagge
+    if debug
     {
-        println!("Einstellungen: {:#?}", einstellungen);
+        println!("Einstellungen:\n-n: {:?}\n-c: {}\n", n, datei);
     }
 
     // Speicherplatz reserverien
-    let mut laufzeit: Vec<f64> = Vec::with_capacity(einstellungen.n.len());
+    let mut laufzeit: Vec<f64> = Vec::with_capacity(n.len());
 
     // fester Seed
     let mut zufall: StdRng = StdRng::seed_from_u64(0xDEADBEEFCAFEBABE);
 
-    // Benchmarking für all n durchführen
-    for i in 0..einstellungen.n.len()
+    // Threads
+    let threads: usize = get_core_ids().map(|cores| cores.len()).unwrap_or_else(|| {
+            println!("\nKonnte logische Kerne nicht abfragen\n");
+            process::exit(1);
+        });
+
+    // Benchmarking für alle n durchführen
+    for i in 0..n.len()
     {
-        let n = einstellungen.n[i] as usize;
+        let n: usize = n[i] as usize;
 
         // Zwei Zufallsmatrizen erzeugen
         let a: Vec<Vec<f64>> = zufall_matrix(n, &mut zufall);
         let b: Vec<Vec<f64>> = zufall_matrix(n, &mut zufall);
+
         // Ergebnismatrix initialisieren
         let mut single: Vec<Vec<f64>> = vec![vec![0.0; n]; n];
         let mut parallel: Vec<Vec<f64>> = vec![vec![0.0; n]; n];
 
         let anfang: Instant = Instant::now();
         
-        parallel_matrixmultiplikation(&a, &b, &mut parallel, n, einstellungen.threads as usize);
-
+        parallel_matrixmultiplikation(&a, &b, &mut parallel, n, threads);
 
         // Laufzeit in Millisekunden
         let dauer:f64  = anfang.elapsed().as_secs_f64() * 1000.0;
         laufzeit.push(dauer);
 
         // Kontrolle ausgeben
-        if einstellungen.flagge
+        if debug
         {
             single_matrixmultiplikation(&a, &b, &mut single, n);
             vergleich(&single, &parallel, n);
         }
     }
 
-    // Speichern der ergebnisse
-    log::speichern(&einstellungen, &laufzeit);
+    // Speichern der Ergebnisse
+    verarbeiten::speichern(&datei, &laufzeit, threads);
 }
 
 
