@@ -24,7 +24,7 @@ pub fn verarbeiten(eingabe: &[String]) -> Settings
     parameter.optflag("f", "", "");
     parameter.optflag("h", "", "");
 
-    let gefunden = parameter.parse(&eingabe[1..]).unwrap();
+    let gefunden = parameter.parse(eingabe).unwrap();
 
     // Hilfe ausgeben
     if gefunden.opt_present("h") 
@@ -57,6 +57,10 @@ pub fn verarbeiten(eingabe: &[String]) -> Settings
         fehlerausgabe("Parameter c nicht gefunden. Benutzung siehe -h"));
     let threads: u32 = c.parse::<u32>().unwrap_or_else(|_| 
         fehlerausgabe("Parameter c hat falsches Format. Benutzung siehe -h"));
+    if threads == 0 
+    {
+        fehlerausgabe("Fehler! Parameter c (Threads) muss mindestens eins sein");
+    }
 
     // Parameter d parsen
     let log: String = gefunden.opt_str("d").unwrap_or_else(|| 
