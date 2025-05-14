@@ -1,11 +1,10 @@
 use getopts::Options;
-use std::process;
+use std::{process, io::Write, fs::OpenOptions, path::Path};
 
 /*
     Parsen der übergebenen CLI Argumente
 */
-pub fn verarbeiten(nutzer: &[String]) -> Result<(Vec<u32>, String, bool), String> {
-    
+pub fn eingabe(nutzer: &[String]) -> (Vec<u32>, String, bool) {
     // getopt Optionen
     let mut optionen: Options = Options::new();
     optionen.optopt("n", "", "", "");
@@ -14,105 +13,147 @@ pub fn verarbeiten(nutzer: &[String]) -> Result<(Vec<u32>, String, bool), String
     optionen.optflag("h", "", "");
 
     // getopt parsen
-    let eingabe: getopts::Matches = optionen.parse(nutzer)
-        .map_err(|_| "Fehler beim Parsen der Eingabe. Benutzung siehe -h".to_string())?;
+    let eingabe: getopts::Matches = optionen
+        .parse(nutzer)
+        .unwrap_or_else(|_| {
+            println!("\nFehler beim Parsen der Eingabe. Benutzung siehe -h\n");
+            std::process::exit(1);
+        });
 
     // ausgeben der Hilfe
     if eingabe.opt_present("h") {
         println!(
-            "\nPflicht:\n\
-             -n <a,b>   erzeuge Matrizen im Bereich [a,b]\n\
-             \nOptional:\n\
+             "\nOptional:\n\
+             -n <zahl>  Matrixgrößen im Bereich [6, zahl] erzeugen\n\
              -c <datei> Ergebnisdatei, Default: matrix.txt\n\
-             -d         Debugmodus\n\
-             -h         Hilfe\n"
+             -d         Debugmodus\n"
         );
         process::exit(0);
     }
 
-    // -n <a,b>
-    let n_str: String = eingabe.opt_str("n").ok_or_else(|| "-n fehlt. Benutzung siehe -h".to_string())?;
-    let n: Vec<u32> = konvertieren(&n_str).map_err(|_| "-n hat falsches Format. Benutzung siehe -h".to_string())?;
+    // parsen von: n <a>, Default n = 30
+    let n: String = eingabe.opt_str("n").unwrap_or("30".to_string());          // noch ändern
+    let n: Vec<u32> = konvertieren(6, &n);                                   // noch ändern
 
-    // -c <datei> (Default matrix.txt)
+    // parsen von: c <datei>, Default datei = matrix.txt
     let mut datei: String = eingabe.opt_str("c").unwrap_or_else(|| "matrix.txt".into());
     if !datei.ends_with(".txt") {
         datei = datei + ".txt";
     }
 
-    // -d
+    // parsen von d
     let debug: bool = eingabe.opt_present("d");
 
-    Ok((n, datei, debug))
+    (n, datei, debug)
 }
 
+
 /*
-    Konvertiert einen durch Komma getrennten String "a,b" in einen integer Vektor, wobei
-    die Schrittweite adaptiv an die Eingabegröße angepasst wird
+    Erzeugt einn Vektor mit Zahlen im Bereich [anfang, ende]
+    Die Schrittweite adaptiv größer
 */
-fn konvertieren(range: &str) -> Result<Vec<u32>, ()> {
+fn konvertieren(anfang: u32, ende: &str) -> Vec<u32> {
     let mut ergebnis: Vec<u32> = Vec::new();
 
-    // String teilen
-    let geteilt: (&str, &str) = range.split_once(',').ok_or(())?;
-    let a: u32 = geteilt.0.trim().parse::<u32>().map_err(|_| ())?;
-    let b: u32 = geteilt.1.trim().parse::<u32>().map_err(|_| ())?;
+    let ende: u32 = ende.trim().parse::<u32>().unwrap_or_else(|_| {
+            println!("\nFehler. Format für n <ganze Zahl>\n");
+            std::process::exit(1);
+        });
 
-    if a > b {
-        return Err(());
-    }
 
     // Schrittweite adaptiv an die Größe anpasen
-    ergebnis.push(a);
-    let mut letztes = a;
-    while letztes < b {
+    ergebnis.push(anfang);
+    let mut letztes: u32 = anfang;
+    while letztes < ende {
         let schritt: u32 = match letztes {
-            0..=9       => 2,
-            10..=99     => 10,
+            0..=9       => 4,
+            10..=99     => 6,
             100..=999   => 100,
             1000..=9999 => 500,
             _           => 1000,
         };
-        let next = letztes.saturating_add(schritt);
-        if next >= b {
-            ergebnis.push(b);
+        let nächstes: u32 = letztes.saturating_add(schritt);
+        if nächstes >= ende {
+            ergebnis.push(ende);
             break;
         }
-        ergebnis.push(next);
-        letztes = next;
+        ergebnis.push(nächstes);
+        letztes = nächstes;
     }
-    Ok(ergebnis)
+    ergebnis
 }
 
 /// Speichert die Prozessorinformationen, Eingabegrößen n und die Laufzeiten in eine Datei
-pub fn speichern(datei: &str, laufzeit: &Vec<f64>, threads: usize) 
-{
+pub fn speichern(datei: &str, n: &Vec<u32>, laufzeit: &Vec<f64>, threads: usize) {
     // cpuinfo einlesen
-    let cpuinfo: String = std::fs::read_to_string("/proc/cpuinfo")
-        .expect("\nFehler beim Lesen von /proc/cpuinfo\n");
+    let cpuinfo: String =
+        std::fs::read_to_string("/proc/cpuinfo").expect("\nFehler beim Lesen von /proc/cpuinfo\n");
 
     // name
-    let name = cpuinfo.lines().find(|l| l.starts_with("model name"))
-        .and_then(|l| l.splitn(2, ':').nth(1)).map(str::trim).unwrap_or("").to_string();
+    let name = cpuinfo
+        .lines()
+        .find(|l| l.starts_with("model name"))
+        .and_then(|l| l.splitn(2, ':').nth(1))
+        .map(str::trim)
+        .unwrap_or("")
+        .to_string();
 
     // logisch
     let logisch: u32 = core_affinity::get_core_ids().map_or(0, |ids| ids.len() as u32);
 
     // physisch
-    let physisch: u32 = cpuinfo.lines().find(|l| l.starts_with("cpu cores"))
-        .and_then(|l| l.splitn(2, ':').nth(1)).and_then(|v| v.trim().parse::<u32>().ok()).unwrap_or(0);
- 
-    let mut hyperthreading: u32;
-    if physisch > 0 { 
-        hyperthreading = logisch / physisch; 
-    } 
-    else { 
+    let physisch: u32 = cpuinfo
+        .lines()
+        .find(|l| l.starts_with("cpu cores"))
+        .and_then(|l| l.splitn(2, ':').nth(1))
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .unwrap_or(0);
+
+    let hyperthreading: u32;
+    if physisch > 0 {
+        hyperthreading = logisch / physisch;
+    } else {
         hyperthreading = 0;
     };
 
     if name.is_empty() || logisch == 0 || physisch == 0 || hyperthreading == 0 {
-        eprintln!("Fehler beim Lesen der Prozessor­spezifikationen");
+        println!("Fehler beim Lesen der Prozessor­spezifikationen\n");
     }
 
-    let infos: String = format!("{},{},{},{}", name, logisch, physisch, hyperthreading);
+    let existiert: bool = Path::new(datei).exists();
+
+    // Datei öffnen (wird überschrieben)
+    let path: &Path = Path::new(datei);
+    let mut file: std::fs::File = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(path)
+        .unwrap_or_else(|e| {
+            println!("Fehler beim Öffnen der Datei {}: {}\n", datei, e);
+            std::process::exit(1);
+        });
+        
+
+    // Prozessor Information in erste Zeile schreiben
+    let kopf: Result<(), std::io::Error> = writeln!(file, "{},{},{},{}", name, logisch, physisch, hyperthreading);
+    if kopf.is_err() {
+        println!("Fehler beim Schreiben der Prozessorinformationen\n");
+    }
+
+    // jede Messung in eine neue Zeile
+    for (&i, &j) in n.iter().zip(laufzeit.iter()) {
+        let fehler: Result<(), std::io::Error> = writeln!(file, "{},{},{}", threads, i, j);
+        if fehler.is_err() {
+            println!("Fehler beim Schreiben der Daten\n");
+            std::process::exit(1);
+        } 
+    }
+
+    if existiert {
+        println!("Daten erfolgreich geschrieben. {} wurde überschrieben.", datei);
+    }
+    else {
+        println!("Daten erfolgreich in {} geschrieben\n", datei);
+    }
 }
