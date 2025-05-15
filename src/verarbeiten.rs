@@ -120,40 +120,39 @@ pub fn speichern(datei: &str, n: &Vec<u32>, laufzeit: &Vec<f64>, threads: usize)
         println!("Fehler beim Lesen der Prozessor­spezifikationen\n");
     }
 
-    let existiert: bool = Path::new(datei).exists();
+     // Prüfen, ob die Datei bereits existiert
+    let existiert = Path::new(datei).exists();
 
-    // Datei öffnen (wird überschrieben)
-    let path: &Path = Path::new(datei);
-    let mut file: std::fs::File = OpenOptions::new()
+    // Datei im Append-Modus öffnen (wird erstellt, falls sie nicht existiert)
+    let mut file = OpenOptions::new()
         .create(true)
-        .write(true)
-        .truncate(true)
-        .open(path)
+        .append(true)
+        .open(datei)
         .unwrap_or_else(|e| {
-            println!("Fehler beim Öffnen der Datei {}: {}\n", datei, e);
+            eprintln!("Fehler beim Öffnen der Datei {}: {}", datei, e);
             std::process::exit(1);
         });
-        
 
-    // Prozessor Information in erste Zeile schreiben
-    let kopf: Result<(), std::io::Error> = writeln!(file, "{},{},{},{}", name, logisch, physisch, hyperthreading);
-    if kopf.is_err() {
-        println!("Fehler beim Schreiben der Prozessorinformationen\n");
+    // Kopfzeile nur schreiben, wenn die Datei gerade erst angelegt wurde
+    if !existiert {
+        writeln!(file, "{},{},{},{}", name, logisch, physisch, hyperthreading)
+            .unwrap_or_else(|_| {
+                eprintln!("Fehler beim Schreiben der Prozessorinformationen");
+                std::process::exit(1);
+            });
     }
 
-    // jede Messung in eine neue Zeile
-    for (&i, &j) in n.iter().zip(laufzeit.iter()) {
-        let fehler: Result<(), std::io::Error> = writeln!(file, "{},{},{}", threads, i, j);
-        if fehler.is_err() {
-            println!("Fehler beim Schreiben der Daten\n");
+    // Messdaten anhängen
+    for (&größe, &zeit) in n.iter().zip(laufzeit.iter()) {
+        writeln!(file, "{},{},{}", threads, größe, zeit).unwrap_or_else(|_| {
+            eprintln!("Fehler beim Schreiben der Daten");
             std::process::exit(1);
-        } 
+        });
     }
 
     if existiert {
-        println!("Daten erfolgreich geschrieben. {} wurde überschrieben.", datei);
-    }
-    else {
-        println!("Daten erfolgreich in {} geschrieben\n", datei);
+        println!("Daten erfolgreich angehängt an {}.", datei);
+    } else {
+        println!("Daten erfolgreich in {} geschrieben.", datei);
     }
 }

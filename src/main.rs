@@ -1,23 +1,15 @@
 mod verarbeiten;
-use core_affinity::get_core_ids;
 use rand::{Rng, SeedableRng, rngs::StdRng};
-use std::{process, thread, time::Instant};
-
-struct daten {
-    zeilen: Vec<i32>,
-    n: u32,
-    a: Vec<Vec<f64>>,
-    b: Vec<Vec<f64>>,
-    c: Vec<Vec<f64>>
-}
+use std::{thread, time::Instant};
+use std::sync::Arc;
 
 /*
     Single Thread
 */
-fn single_matrixmultiplikation(a: &Vec<Vec<f64>>, b: &Vec<Vec<f64>>, c: &mut Vec<Vec<f64>>, n: usize) {
+fn single_matrixmultiplikation(a: &Vec<Vec<u32>>, b: &Vec<Vec<u32>>, c: &mut Vec<Vec<u32>>, n: usize) {
     for i in 0..n {
         for j in 0..n {
-            let mut summe: f64 = 0.0;
+            let mut summe: u32 = 0;
             for k in 0..n {
                 summe = summe + a[i][k] * b[k][j];
             }
@@ -30,20 +22,74 @@ fn single_matrixmultiplikation(a: &Vec<Vec<f64>>, b: &Vec<Vec<f64>>, c: &mut Vec
 /*
     naive parallele Matrixmultiplikation mit manuell gestarteten Threads 
 */
-fn parallel_matrixmultiplikation(a: &Vec<Vec<f64>>, b: &Vec<Vec<f64>>, c: &mut Vec<Vec<f64>>, n: usize, threads: usize) {
+fn parallel_multiplikation(
+    a: &Vec<Vec<u32>>,
+    b: &Vec<Vec<u32>>,
+    num_threads: usize,
+) -> Vec<Vec<u32>> {
+    let n = a.len();                    // number of rows in A
+    let p = a[0].len();                 // number of cols in A == rows in B
+    let m = b[0].len();                 // number of cols in B
 
+    // share A and B across threads
+    let a_shared = Arc::new(a.clone());
+    let b_shared = Arc::new(b.clone());
 
+    // how many full rows per thread + distribute the remainder
+    let base = n / num_threads;
+    let rem  = n % num_threads;
+
+    let mut handles = Vec::with_capacity(num_threads);
+    for t in 0..num_threads {
+        let a_clone = Arc::clone(&a_shared);
+        let b_clone = Arc::clone(&b_shared);
+
+        // compute this thread’s slice [start..end)
+        let start = t * base + usize::min(t, rem);
+        let end   = start + base + if t < rem { 1 } else { 0 };
+
+        let handle = thread::spawn(move || {
+            // returns Vec<(row_index, row_vec)>
+            let mut out = Vec::with_capacity(end - start);
+            for i in start..end {
+                let mut row = Vec::with_capacity(m);
+                for j in 0..m {
+                    let mut sum = 0;
+                    for k in 0..p {
+                        sum += a_clone[i][k] * b_clone[k][j];
+                    }
+                    row.push(sum);
+                }
+                out.push((i, row));
+            }
+            out
+        });
+
+        handles.push(handle);
+    }
+
+    // collect and assemble
+    let mut result = vec![vec![0; m]; n];
+    for handle in handles {
+        for (i, row) in handle.join().unwrap() {
+            result[i] = row;
+        }
+    }
+
+    result
 }
 
 
 
 
+
+
 /// Erzeugt eine n x n Matrix mit f64 Zufallswerten im Bereich [0,1[
-fn zufall_matrix(n: usize, rng: &mut StdRng) -> Vec<Vec<f64>> {
-    let mut matrix: Vec<Vec<f64>> = vec![vec![0.0; n]; n];
+fn zufall_matrix(n: usize, rng: &mut StdRng) -> Vec<Vec<u32>> {
+    let mut matrix: Vec<Vec<u32>> = vec![vec![0; n]; n];
     for i in 0..n {
         for j in 0..n {
-            matrix[i][j] = rng.random::<f64>();
+            matrix[i][j] = rng.random_range(0..10);
         }
     }
     matrix
@@ -55,7 +101,7 @@ fn main() {
     // Test-Einstellungen
     let test: Vec<String> = vec![
         "-n".into(), "30".into(),
-        "-c".into(), "ergebnis".into(),
+        "-c".into(), "dumm".into(),
         "-d".into(),
     ];
 
@@ -74,63 +120,57 @@ fn main() {
     let mut zufall: StdRng = StdRng::seed_from_u64(0xDEADBEEFCAFEBABE);
 
     // Threads
-    let threads: usize = get_core_ids().map(|cores| cores.len()).unwrap_or_else(|| {
-            println!("\nKonnte logische Kerne nicht abfragen\n");
-            process::exit(1);
-        });
+    //let threads: usize = get_core_ids().map(|cores| cores.len()).unwrap_or_else(|| {
+      //      println!("\nKonnte logische Kerne nicht abfragen\n");
+        //    process::exit(1);
+        //});
 
     // Benchmarking für alle n durchführen
-    for i in 2..5 {                             // hier threads statt 5 verwenden
-        for j in 0..n.len() {
-            
-            let n: usize = n[j] as usize;
+    for i in 2..6 {                           
+        let aktuell: usize = n[i] as usize;
 
-            // Zufallsmatrizen erzeugen
-            let a: Vec<Vec<f64>> = zufall_matrix(n, &mut zufall);
-            let b: Vec<Vec<f64>> = zufall_matrix(n, &mut zufall);
+        // Zufallsmatrizen erzeugen
+        let a: Vec<Vec<u32>> = zufall_matrix(aktuell, &mut zufall);
+        let b: Vec<Vec<u32>> = zufall_matrix(aktuell, &mut zufall);
 
-            // Ergebnismatrix initialisieren
-            let mut single: Vec<Vec<f64>> = vec![vec![0.0; n]; n];
-            let mut parallel: Vec<Vec<f64>> = vec![vec![0.0; n]; n];
+        // leere Ergebnismatrizen erzeugen
+        let mut c_single: Vec<Vec<u32>> = vec![vec![0; aktuell]; aktuell];
 
-            let anfang: Instant = Instant::now();
+        for _ in 0..n.len() {
+            let start: Instant = Instant::now();
 
-            parallel_matrixmultiplikation(&a, &b, &mut parallel, n, i);
+            let c_parallel = parallel_multiplikation(&a, &b, i);
 
             // Laufzeit in Millisekunden
-            let dauer: f64 = anfang.elapsed().as_secs_f64() * 1000.0;
+            let dauer: f64 = start.elapsed().as_secs_f64() * 1000.0;
             laufzeit.push(dauer);
 
             // Kontrolle ausgeben
             if debug {
-                single_matrixmultiplikation(&a, &b, &mut single, n);
-                vergleich(&single, &parallel, n);
+                single_matrixmultiplikation(&a, &b, &mut c_single, aktuell);
+                vergleich(&c_single, &c_parallel);
             }
         }
-
-        // Speichern der Ergebnisse
-        verarbeiten::speichern(&datei, &n, &laufzeit, threads);
+        // Speichern der Ergebnisse eines Threads
+        verarbeiten::speichern(&datei, &n, &laufzeit, i);
+        
+        // Laufzeit zurücksetzen
+        laufzeit.clear();
     }
 }
+
 
 /*
     Vergleich der Ergebnisse von single und multithreaded
 */
-fn vergleich(single: &Vec<Vec<f64>>, parallel: &Vec<Vec<f64>>, n: usize) {
-    if single == parallel {
-        println!("\nErgebnisse stimmen überein\n");
-    } else {
-        eprintln!("\nErgebnisse weichen ab\n");
-        'outer: for i in 0..n {
-            for j in 0..n {
-                if (single[i][j] - parallel[i][j]).abs() > 1e-12 {
-                    println!(
-                        "Abweichung bei ({}, {}): single={} vs parallel={}",
-                        i, j, single[i][j], parallel[i][j],
-                    );
-                    break 'outer;
-                }
+fn vergleich(single: &Vec<Vec<u32>>, parallel: &Vec<Vec<u32>>) {
+    for i in 0..single.len() {
+        for j in 0..single[0].len() {
+            if single[i][j] != parallel[i][j] {
+                println!("Ergebnis falsch\n");
+                return 
             }
         }
     }
+    println!("Ergebnis korrekt\n");
 }
