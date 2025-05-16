@@ -23,17 +23,13 @@ fn single_matrixmultiplikation(a: &Vec<Vec<u32>>, b: &Vec<Vec<u32>>, c: &mut Vec
     naive parallele Matrixmultiplikation mit manuell gestarteten Threads 
 */
 fn parallel_multiplikation(
-    a: &Vec<Vec<u32>>,
-    b: &Vec<Vec<u32>>,
+    a: Arc<Vec<Vec<u32>>>,
+    b: Arc<Vec<Vec<u32>>>,
     num_threads: usize,
 ) -> Vec<Vec<u32>> {
     let n = a.len();                    // number of rows in A
     let p = a[0].len();                 // number of cols in A == rows in B
     let m = b[0].len();                 // number of cols in B
-
-    // share A and B across threads
-    let a_shared = Arc::new(a.clone());
-    let b_shared = Arc::new(b.clone());
 
     // how many full rows per thread + distribute the remainder
     let base = n / num_threads;
@@ -41,8 +37,8 @@ fn parallel_multiplikation(
 
     let mut handles = Vec::with_capacity(num_threads);
     for t in 0..num_threads {
-        let a_clone = Arc::clone(&a_shared);
-        let b_clone = Arc::clone(&b_shared);
+        let a_clone = Arc::clone(&a);
+        let b_clone = Arc::clone(&b);
 
         // compute this thread’s slice [start..end)
         let start = t * base + usize::min(t, rem);
@@ -133,13 +129,18 @@ fn main() {
         let a: Vec<Vec<u32>> = zufall_matrix(aktuell, &mut zufall);
         let b: Vec<Vec<u32>> = zufall_matrix(aktuell, &mut zufall);
 
+        // 2) wrap them in Arcs once, before benchmarking loop
+        let a_shared = Arc::new(a);
+        let b_shared = Arc::new(b);
+
         // leere Ergebnismatrizen erzeugen
         let mut c_single: Vec<Vec<u32>> = vec![vec![0; aktuell]; aktuell];
 
         for _ in 0..n.len() {
             let start: Instant = Instant::now();
 
-            let c_parallel = parallel_multiplikation(&a, &b, i);
+            let c_parallel = parallel_multiplikation(Arc::clone(&a_shared),
+                Arc::clone(&b_shared), i);
 
             // Laufzeit in Millisekunden
             let dauer: f64 = start.elapsed().as_secs_f64() * 1000.0;
@@ -147,7 +148,7 @@ fn main() {
 
             // Kontrolle ausgeben
             if debug {
-                single_matrixmultiplikation(&a, &b, &mut c_single, aktuell);
+                single_matrixmultiplikation(&*a_shared, &*b_shared, &mut c_single, aktuell);
                 vergleich(&c_single, &c_parallel);
             }
         }

@@ -33,6 +33,11 @@ pub fn eingabe(nutzer: &[String]) -> (Vec<u32>, String, bool) {
 
     // parsen von: n <a>, Default n = 30
     let n: String = eingabe.opt_str("n").unwrap_or("30".to_string());          // noch ändern
+    if n < 6
+    {
+        println!("Fehler: -n <zahl> muss größer 6 sein");
+        process::exit(1);
+    }
     let n: Vec<u32> = konvertieren(6, &n);                                   // noch ändern
 
     // parsen von: c <datei>, Default datei = matrix.txt
