@@ -4,10 +4,11 @@ use std::{process, io::Write, fs::OpenOptions, path::Path};
 /*
     Parsen der übergebenen CLI Argumente
 */
-pub fn eingabe(nutzer: &[String]) -> (Vec<u32>, String, bool) {
+pub fn eingabe(nutzer: &[String]) -> (Vec<u32>, u32, String, bool) {
     // getopt Optionen
     let mut optionen: Options = Options::new();
     optionen.optopt("n", "", "", "");
+    optionen.optopt("b", "", "", "");
     optionen.optopt("c", "", "", "");
     optionen.optflag("d", "", "");
     optionen.optflag("h", "", "");
@@ -22,23 +23,31 @@ pub fn eingabe(nutzer: &[String]) -> (Vec<u32>, String, bool) {
 
     // ausgeben der Hilfe
     if eingabe.opt_present("h") {
-        println!(
-             "\nOptional:\n\
-             -n <zahl>  Matrixgrößen im Bereich [6, zahl] erzeugen\n\
-             -c <datei> Ergebnisdatei, Default: matrix.txt\n\
-             -d         Debugmodus\n"
-        );
+                println!("
+        \nPflicht:
+        -n <zahl>   Matrixgrößen im Bereich [6, zahl] erzeugen
+        -b <zahl>   1: regulär parallel
+                    2: loop unrolling
+                    3: block tiling
+                    4: rayon
+                    5: crossbeam
+        Optional:
+        -c <datei>  Ergebnisdatei, Default: matrix.txt
+        -d          Debugmodus\n
+        ");
         process::exit(0);
     }
 
     // parsen von: n <a>, Default n = 30
-    let n: String = eingabe.opt_str("n").unwrap_or("30".to_string());          // noch ändern
-    if n < 6
-    {
-        println!("Fehler: -n <zahl> muss größer 6 sein");
-        process::exit(1);
-    }
-    let n: Vec<u32> = konvertieren(6, &n);                                   // noch ändern
+    let n: String = eingabe.opt_str("n").unwrap_or_else(|| { fehlerausgabe("Parameter n fehlt"); });     
+    let n: Vec<u32> = konvertieren(6, &n);    
+
+    let b: u32 = eingabe.opt_str("b").unwrap_or_else(|| { fehlerausgabe("Parameter b fehlt"); })
+        .parse::<u32>()
+        .unwrap_or_else(|_| { fehlerausgabe("Parameter b muss eine Zahl sein");});
+
+    // gültiger Bereich
+    if !(1..=5).contains(&b) { fehlerausgabe("Parameter b muss eine Zahl zwischen 1 und 5 sein"); }                              
 
     // parsen von: c <datei>, Default datei = matrix.txt
     let mut datei: String = eingabe.opt_str("c").unwrap_or_else(|| "matrix.txt".into());
@@ -49,9 +58,13 @@ pub fn eingabe(nutzer: &[String]) -> (Vec<u32>, String, bool) {
     // parsen von d
     let debug: bool = eingabe.opt_present("d");
 
-    (n, datei, debug)
+    (n, b, datei, debug)
 }
 
+fn fehlerausgabe(fehler: &str) -> ! {
+        println!("\nFehler! {}. Benutzung siehe -h\n", fehler);
+        process::exit(1);
+}
 
 /*
     Erzeugt einn Vektor mit Zahlen im Bereich [anfang, ende]
@@ -60,11 +73,11 @@ pub fn eingabe(nutzer: &[String]) -> (Vec<u32>, String, bool) {
 fn konvertieren(anfang: u32, ende: &str) -> Vec<u32> {
     let mut ergebnis: Vec<u32> = Vec::new();
 
-    let ende: u32 = ende.trim().parse::<u32>().unwrap_or_else(|_| {
-            println!("\nFehler. Format für n <ganze Zahl>\n");
-            std::process::exit(1);
-        });
+    let ende: u32 = ende.trim().parse::<u32>().unwrap_or_else(|_| { fehlerausgabe("Format für n <ganze Zahl>\n"); });
 
+    if anfang >= ende {
+        fehlerausgabe(&format!("-n <zahl> muss größer {} sein", anfang));
+    }
 
     // Schrittweite adaptiv an die Größe anpasen
     ergebnis.push(anfang);
@@ -89,7 +102,7 @@ fn konvertieren(anfang: u32, ende: &str) -> Vec<u32> {
 }
 
 /// Speichert die Prozessorinformationen, Eingabegrößen n und die Laufzeiten in eine Datei
-pub fn speichern(datei: &str, n: &Vec<u32>, laufzeit: &Vec<f64>, threads: usize) {
+pub fn speichern(datei: &str, n: &Vec<u32>, laufzeit: &Vec<f64>, threads: usize) -> bool {
     // cpuinfo einlesen
     let cpuinfo: String =
         std::fs::read_to_string("/proc/cpuinfo").expect("\nFehler beim Lesen von /proc/cpuinfo\n");
@@ -156,8 +169,8 @@ pub fn speichern(datei: &str, n: &Vec<u32>, laufzeit: &Vec<f64>, threads: usize)
     }
 
     if existiert {
-        println!("Daten erfolgreich angehängt an {}.", datei);
+        true
     } else {
-        println!("Daten erfolgreich in {} geschrieben.", datei);
+        false
     }
 }
