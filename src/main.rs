@@ -20,62 +20,79 @@ fn single_matrixmultiplikation(a: &Vec<Vec<u32>>, b: &Vec<Vec<u32>>, c: &mut Vec
 
 
 /*
-    naive parallele Matrixmultiplikation mit manuell gestarteten Threads 
+    parallele Matrixmultiplikation mit manuell gestarteten Threads 
 */
-fn parallel_multiplikation(a: Arc<Vec<Vec<u32>>>, b: Arc<Vec<Vec<u32>>>, num_threads: usize) -> Vec<Vec<u32>> {
-    let n = a.len();                    // number of rows in A
-    let p = a[0].len();                 // number of cols in A == rows in B
-    let m = b[0].len();                 // number of cols in B
+fn multiplikation(a: Arc<Vec<Vec<u32>>>, b: Arc<Vec<Vec<u32>>>, num_threads: usize) -> Vec<Vec<u32>> {
+    
+    // Anzahl Zeilen
+    let anzahl_zeilen: usize = a.len();                    
+    // Anzahl spalten
+    let anzahl_spalten: usize = a[0].len();                                 
 
-    // how many full rows per thread + distribute the remainder
-    let base = n / num_threads;
-    let rem  = n % num_threads;
+    // Anzahl Zeilen pro Thread
+    let zeilen_pro_thread: usize = anzahl_zeilen / num_threads;
+    let rest: usize  = anzahl_zeilen % num_threads;
 
-    let mut handles = Vec::with_capacity(num_threads);
-    for t in 0..num_threads  {
+    // für schließen der Threads
+    let mut handles: Vec<thread::JoinHandle<Vec<(usize, Vec<u32>)>>> = Vec::with_capacity(num_threads);
 
-        let a_clone = Arc::clone(&a);
-        let b_clone = Arc::clone(&b);
-        let core_id = CoreId { id: t };
+    // benötigte Anzahl Threads
+    for z in 0..num_threads  {
 
-        // compute this thread’s slice [start..end)
-        let start = t * base + usize::min(t, rem);
-        let end   = start + base + if t < rem { 1 } else { 0 };
+        // Kopie des Ark Zeigers für jeden Thread erzeugen
+        let a_zeiger: Arc<Vec<Vec<u32>>> = Arc::clone(&a);
+        let b_zeiger: Arc<Vec<Vec<u32>>> = Arc::clone(&b);
 
-        let handle = thread::spawn(move || {
+        // struct für Thread pinning
+        let kern: CoreId = CoreId { id: z };
 
-            set_for_current(core_id);
+        // berechnet den Bereich [anfang,ende[ für jeden Thread
+        let anfang: usize = z * zeilen_pro_thread + usize::min(z, rest);
+        let ende: usize   = anfang + zeilen_pro_thread + if z < rest { 1 } else { 0 };
 
-            // returns Vec<(row_index, row_vec)>
-            let mut out = Vec::with_capacity(end - start);
-            for i in start..end {
-                let mut row = Vec::with_capacity(m);
-                for j in 0..m {
-                    let mut sum = 0;
-                    for k in 0..p {
-                        sum += a_clone[i][k] * b_clone[k][j];
+        // Threads erzeugen
+        let erzeugen: thread::JoinHandle<Vec<(usize, Vec<u32>)>> = thread::spawn(move || {
+
+            // Kern auf logischen Prozessorkern pinnen
+            set_for_current(kern);
+
+            // speichert die zeilen für jeden Thread
+            // jedes Element ist ein Tupel aus (zeilenindex, Zeile)
+            let mut zwischenergebnis: Vec<(usize, Vec<u32>)> = Vec::with_capacity(ende - anfang);
+            for i in anfang..ende {
+                // speichert die berechnet zeile
+                let mut temporär: Vec<u32> = Vec::with_capacity(anzahl_spalten);
+                for j in 0..anzahl_spalten {
+                    let mut summe: u32 = 0;
+                    // Zeile i * Spalte j
+                    for k in 0..anzahl_spalten {
+                        summe = summe + a_zeiger[i][k] * b_zeiger[k][j];
                     }
-                    row.push(sum);
+                    temporär.push(summe);
                 }
-                out.push((i, row));
+                zwischenergebnis.push((i, temporär));
             }
-            out
+            // Vektor mit Tuplen aus (Zeilenindex, Zeile) zurückgeben
+            zwischenergebnis
         });
 
-        handles.push(handle);
+        // Thread handle für join speichern
+        handles.push(erzeugen);
     }
 
-    // collect and assemble
-    let mut result = vec![vec![0; m]; n];
+    // Ergebnismatrix mit null initilaisieren
+    let mut ergebnis: Vec<Vec<u32>> = vec![Vec::with_capacity(anzahl_spalten); anzahl_zeilen];
+    // Matrix zusammenbauen
+    // Es werden nur die Zeiger geändert und keine Daten kopiert  -> O(1)
     for handle in handles {
         for (i, row) in handle.join().unwrap() {
-            result[i] = row;
+            // Speichern der Zeile des zwischenergebnis in der richtigen Zeile
+            ergebnis[i] = row;
         }
     }
 
-    result
+    ergebnis
 }
-
 
 
 
@@ -154,7 +171,7 @@ fn main() {
             let start: Instant = Instant::now();
 
             if modus == 1 {
-                c = parallel_multiplikation(Arc::clone(&a_teilen), Arc::clone(&b_teilen), i);
+                c = multiplikation(Arc::clone(&a_teilen), Arc::clone(&b_teilen), i);
             }
 
             // Laufzeit in Millisekunden
@@ -164,16 +181,11 @@ fn main() {
             // Kontrolle ausgeben
             if debug {
                 single_matrixmultiplikation(&*a_teilen, &*b_teilen, &mut c_single, aktuell);
-                if modus == 1 {
-                    vergleich(&c_single, &c);
-                }
+                vergleich(&c_single, &c);
             }
         }
         // Speichern der Ergebnisse eines Threads
-        let gespeichert: bool = verarbeiten::speichern(&datei, &n, &laufzeit, i);
-        if !gespeichert {
-            println!("Fehler beim speichern der Daten");
-        }
+        verarbeiten::speichern(&datei, &n, &laufzeit, i);
 
         // Laufzeit zurücksetzen
         laufzeit.clear();
@@ -196,4 +208,74 @@ fn vergleich(single: &Vec<Vec<u32>>, parallel: &Vec<Vec<u32>>) {
         }
     }
     println!("Ergebnis korrekt\n");
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+fn multiply(
+    a: Arc<Vec<Vec<u32>>>,
+    b: Arc<Vec<Vec<u32>>>,
+    num_threads: usize,
+) -> Vec<Vec<u32>> {
+    let n = a.len();
+    let m = b[0].len();
+
+    // Allocate the full result matrix here
+    let mut result = vec![vec![0; m]; n];
+
+    thread::scope(|s| {
+        // Borrow the whole matrix one time
+        let mut remaining: &mut [Vec<u32>] = result.as_mut_slice();
+        let mut row_offset = 0;
+
+        // How many rows per thread
+        let base = n / num_threads;
+        let rem  = n % num_threads;
+
+        for t in 0..num_threads {
+            // Compute slice size for this thread
+            let rows = base + if t < rem { 1 } else { 0 };
+
+            // Split off the front `rows` from `remaining`
+            let (chunk, tail) = remaining.split_at_mut(rows);
+
+            // Capture the start index so your closure knows the global row
+            let offset = row_offset;
+            let a_cloned = Arc::clone(&a);
+            let b_cloned = Arc::clone(&b);
+
+            // Spawn the thread, moving in *only* this chunk (disjoint &mut)
+            s.spawn(move || {
+                for (i_local, row_out) in chunk.iter_mut().enumerate() {
+                    let i = offset + i_local;
+                    for j in 0..m {
+                        let mut sum = 0;
+                        for k in 0..a_cloned[i].len() {
+                            sum += a_cloned[i][k] * b_cloned[k][j];
+                        }
+                        row_out[j] = sum;
+                    }
+                }
+            });
+
+            // Prepare for next iteration
+            remaining = tail;
+            row_offset += rows;
+        }
+    }); // ← threads are all joined here
+
+    result
 }

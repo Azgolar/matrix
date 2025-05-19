@@ -102,7 +102,7 @@ fn konvertieren(anfang: u32, ende: &str) -> Vec<u32> {
 }
 
 /// Speichert die Prozessorinformationen, Eingabegrößen n und die Laufzeiten in eine Datei
-pub fn speichern(datei: &str, n: &Vec<u32>, laufzeit: &Vec<f64>, threads: usize) -> bool {
+pub fn speichern(datei: &str, n: &Vec<u32>, laufzeit: &Vec<f64>, threads: usize) {
     // cpuinfo einlesen
     let cpuinfo: String =
         std::fs::read_to_string("/proc/cpuinfo").expect("\nFehler beim Lesen von /proc/cpuinfo\n");
@@ -155,7 +155,7 @@ pub fn speichern(datei: &str, n: &Vec<u32>, laufzeit: &Vec<f64>, threads: usize)
     if !existiert {
         writeln!(file, "{},{},{},{}", name, logisch, physisch, hyperthreading)
             .unwrap_or_else(|_| {
-                eprintln!("Fehler beim Schreiben der Prozessorinformationen");
+                println!("Fehler beim Schreiben der Prozessorinformationen");
                 std::process::exit(1);
             });
     }
@@ -163,14 +163,8 @@ pub fn speichern(datei: &str, n: &Vec<u32>, laufzeit: &Vec<f64>, threads: usize)
     // Messdaten anhängen
     for (&größe, &zeit) in n.iter().zip(laufzeit.iter()) {
         writeln!(file, "{},{},{}", threads, größe, zeit).unwrap_or_else(|_| {
-            eprintln!("Fehler beim Schreiben der Daten");
+            println!("Fehler beim Schreiben der Daten");
             std::process::exit(1);
         });
-    }
-
-    if existiert {
-        true
-    } else {
-        false
     }
 }
