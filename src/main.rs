@@ -88,53 +88,63 @@ fn multiplikation(a: Arc<Vec<Vec<u32>>>, b: Arc<Vec<Vec<u32>>>,  c: &mut Vec<Vec
 
 
 fn multiply(a: Arc<Vec<Vec<u32>>>, b: Arc<Vec<Vec<u32>>>, c: &mut Vec<Vec<u32>>, n: usize, num_threads: usize) {
-
+    // scope ist notwendig um Threads mit veränderbaren Referenzen (&mut c) zu starten, ohne dass die Referenz statisch
+    // sein muss  
     thread::scope(|s| {
-        // Borrow the whole matrix one time
-        let mut remaining: &mut [Vec<u32>] = c.as_mut_slice();
-        let mut row_offset = 0;
+        // Borrow the entire output matrix C as a mutable slice of rows
+        let mut ürig: &mut [Vec<u32>] = c.as_mut_slice();
+        // Track the global row offset for each thread's chunk
+        let mut offset: usize = 0;
 
-        // How many rows per thread
-        let base: usize = n / num_threads;
-        let rem: usize  = n % num_threads;
+        // Zeilen pro Thread
+        let basis: usize = n / num_threads;
+        let rest: usize  = n % num_threads;
 
-        for t in 0..num_threads {
-            // Compute slice size for this thread
-            let rows: usize = base + if t < rem { 1 } else { 0 };
+        for z in 0..num_threads {
+            // insgesamte Zeilen des Threads 
+            let zeilen: usize = basis + if z < rest { 1 } else { 0 };
 
-            // Split off the front `rows` from `remaining`
-            let (chunk, tail): (&mut [Vec<u32>], &mut [Vec<u32>]) = remaining.split_at_mut(rows);
-            // Capture the start index so your closure knows the global row
-            let offset: usize = row_offset;
-            let a_cloned: Arc<Vec<Vec<u32>>> = Arc::clone(&a);
-            let b_cloned: Arc<Vec<Vec<u32>>> = Arc::clone(&b);
+            // Split off the first `rows` rows from `remaining` for this chunk
+            let (bearbeiten, restliche_zeilen): (&mut [Vec<u32>], &mut [Vec<u32>]) = ürig.split_at_mut(zeilen);
+            // Capture the starting row index for this thread
+            let anfang: usize = offset;
 
-            // struct für Thread pinning
-            let kern: CoreId = CoreId { id: t };
+            // jeder Thread muss seinen eigenen Zeiger haben
+            let a_zeiger: Arc<Vec<Vec<u32>>> = Arc::clone(&a);
+            let b_zeiger: Arc<Vec<Vec<u32>>> = Arc::clone(&b);
 
-            // Spawn the thread, moving in *only* this chunk (disjoint &mut)
+            // Kern CoreId struct für pinning erzeugen 
+            let kern: CoreId = CoreId { id: z };
+
+            // Spawn the thread, moving captured variables into the closure
             s.spawn(move || {
 
-                // Kern auf logischen Prozessorkern pinnen
+                // Kern pinning 
                 set_for_current(kern);
 
-                for (i_local, row_out) in chunk.iter_mut().enumerate() {
-                    let i = offset + i_local;
+                // Iterate over each local row in this chunk
+                for (i_lokal, ausgabe) in bearbeiten.iter_mut().enumerate() {
+                    // globaler Zeilenindex
+                    let i: usize = anfang + i_lokal;
+                    // über Spalten iterieren
                     for j in 0..n {
-                        let mut sum = 0;
-                        for k in 0..a_cloned[i].len() {
-                            sum += a_cloned[i][k] * b_cloned[k][j];
+                        // C[i][j] berechnen
+                        let mut summe: u32 = 0;
+                        for k in 0..a_zeiger[i].len() {
+                            summe = summe + a_zeiger[i][k] * b_zeiger[k][j];
                         }
-                        row_out[j] = sum;
+                        // schreiben in C
+                        ausgabe[j] = summe;
                     }
                 }
-            });
+            }); 
 
-            // Prepare for next iteration
-            remaining = tail;
-            row_offset += rows;
+            // Updaten für nächsten Thread
+            ürig = restliche_zeilen;
+            offset = offset + zeilen;
         }
-    }); // ← threads are all joined here
+        // wegen scoped thread ist der join automatisch
+    });
 }
 
 
