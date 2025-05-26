@@ -1,5 +1,15 @@
 use getopts::Options;
-use std::{process, io::Write, fs::OpenOptions, path::Path};
+use std::{process, io::Write, fs::read_to_string, fs::OpenOptions, path::Path};
+use core_affinity::{CoreId, get_core_ids};
+
+pub struct ProzessorSpecs {
+    pub name: String,
+    pub logisch: u32,
+    pub physisch: u32,
+    pub hyperthreading: u32
+}
+
+
 
 /*
     Parsen der übergebenen CLI Argumente
@@ -101,43 +111,95 @@ fn konvertieren(anfang: u32, ende: &str) -> Vec<u32> {
     ergebnis
 }
 
-/// Speichert die Prozessorinformationen, Eingabegrößen n und die Laufzeiten in eine Datei
-pub fn speichern(datei: &str, n: &Vec<u32>, laufzeit: &Vec<f64>, threads: usize) {
-    // cpuinfo einlesen
-    let cpuinfo: String =
-        std::fs::read_to_string("/proc/cpuinfo").expect("\nFehler beim Lesen von /proc/cpuinfo\n");
+/*
+    setzt die Prozessorspezifikationen
+*/
+impl ProzessorSpecs {
+    pub fn new() -> Self {
+        let mut daten = ProzessorSpecs {
+            name: String::new(),
+            logisch: 0,
+            physisch: 0,
+            hyperthreading: 0,
+        };
 
-    // name
-    let name = cpuinfo
-        .lines()
-        .find(|l| l.starts_with("model name"))
-        .and_then(|l| l.splitn(2, ':').nth(1))
-        .map(str::trim)
-        .unwrap_or("")
-        .to_string();
+        let cpuinfo = read_to_string("/proc/cpuinfo")
+            .unwrap_or_default();
 
-    // logisch
-    let logisch: u32 = core_affinity::get_core_ids().map_or(0, |ids| ids.len() as u32);
+        for line in cpuinfo.lines() {
+            if daten.name.is_empty() && line.starts_with("model name") {
+                if let Some(val) = line.splitn(2, ':').nth(1) {
+                    daten.name = val.trim().to_string();
+                }
+            }
+            else if daten.logisch == 0 && line.starts_with("siblings") {
+                if let Some(val) = line.splitn(2, ':').nth(1) {
+                    daten.logisch = val.trim().parse().unwrap_or(0);
+                }
+            }
+            else if daten.physisch == 0 && line.starts_with("cpu cores") {
+                if let Some(val) = line.splitn(2, ':').nth(1) {
+                    daten.physisch = val.trim().parse().unwrap_or(0);
+                }
+            }
+            if !daten.name.is_empty() && daten.logisch != 0 && daten.physisch != 0 {
+                break;
+            }
+        }
 
-    // physisch
-    let physisch: u32 = cpuinfo
-        .lines()
-        .find(|l| l.starts_with("cpu cores"))
-        .and_then(|l| l.splitn(2, ':').nth(1))
-        .and_then(|v| v.trim().parse::<u32>().ok())
-        .unwrap_or(0);
+        if daten.physisch > 0 {
+            daten.hyperthreading = daten.logisch / daten.physisch;
+        } 
+        else {
+            daten.hyperthreading = 1;
+        };
 
-    let hyperthreading: u32;
-    if physisch > 0 {
-        hyperthreading = logisch / physisch;
-    } else {
-        hyperthreading = 0;
-    };
+        if daten.name.is_empty() || daten.logisch == 0 || daten.physisch == 0 {
+            println!("Fehler beim Auslesen der Prozessordaten");
+        }
 
-    if name.is_empty() || logisch == 0 || physisch == 0 || hyperthreading == 0 {
-        println!("Fehler beim Lesen der Prozessor­spezifikationen\n");
+        daten
+    }
+}
+
+/// Liefert bis zu `anzahl` CoreId in phys+HT-Reihenfolge
+pub fn pinnen_liste(anzahl: usize, prozessor: &ProzessorSpecs) -> Vec<CoreId> {
+    // 1) Alle Cores einlesen
+    let kern_ids: Vec<CoreId> = get_core_ids().unwrap_or_else(|| {
+        eprintln!("Fehler beim Lesen der Core-IDs für CPU-Pinning");
+        process::exit(1);
+    });
+
+    let mut reihenfolge: Vec<CoreId> = Vec::with_capacity(anzahl);
+
+    // 2) Physische Kerne zuerst hinzufügen
+    for i in 0..prozessor.physisch as usize {
+        if reihenfolge.len() >= anzahl { 
+            break;
+        }
+        
+        let index: usize = i * prozessor.hyperthreading as usize;
+        let gefunden: Option<&CoreId> = kern_ids.iter().find(|c| c.id == index);
+        reihenfolge.push(*gefunden.unwrap());
     }
 
+    // 3) Restliche (logische) Kerne
+    for i in kern_ids.iter() {
+        if reihenfolge.len() >= anzahl {
+            break;
+        }
+        // nur hinzufügen, wenn noch nicht drin
+        if !reihenfolge.iter().any(|c| c.id == i.id) {
+            reihenfolge.push(*i);
+        }
+    }
+
+    reihenfolge
+}
+
+
+/// Speichert die Prozessorinformationen, Eingabegrößen n und die Laufzeiten in eine Datei
+pub fn speichern(datei: &str, n: &Vec<u32>, laufzeit: &Vec<f64>, threads: usize, prozessor: &ProzessorSpecs) {
      // Prüfen, ob die Datei bereits existiert
     let existiert = Path::new(datei).exists();
 
@@ -148,15 +210,15 @@ pub fn speichern(datei: &str, n: &Vec<u32>, laufzeit: &Vec<f64>, threads: usize)
         .open(datei)
         .unwrap_or_else(|e| {
             eprintln!("Fehler beim Öffnen der Datei {}: {}", datei, e);
-            std::process::exit(1);
+            process::exit(1);
         });
 
     // Kopfzeile nur schreiben, wenn die Datei gerade erst angelegt wurde
     if !existiert {
-        writeln!(file, "{},{},{},{}", name, logisch, physisch, hyperthreading)
+        writeln!(file, "{},{},{},{}", prozessor.name, prozessor.logisch, prozessor.physisch, prozessor.hyperthreading)
             .unwrap_or_else(|_| {
                 println!("Fehler beim Schreiben der Prozessorinformationen");
-                std::process::exit(1);
+                process::exit(1);
             });
     }
 
@@ -164,7 +226,7 @@ pub fn speichern(datei: &str, n: &Vec<u32>, laufzeit: &Vec<f64>, threads: usize)
     for (&größe, &zeit) in n.iter().zip(laufzeit.iter()) {
         writeln!(file, "{},{},{}", threads, größe, zeit).unwrap_or_else(|_| {
             println!("Fehler beim Schreiben der Daten");
-            std::process::exit(1);
+            process::exit(1);
         });
     }
 }

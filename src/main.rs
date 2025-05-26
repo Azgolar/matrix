@@ -22,7 +22,7 @@ fn single_matrixmultiplikation(a: &Vec<Vec<u32>>, b: &Vec<Vec<u32>>, c: &mut Vec
 /*
     parallele Matrixmultiplikation mit manuell gestarteten Threads 
 */
-fn multiplikation(a: Arc<Vec<Vec<u32>>>, b: Arc<Vec<Vec<u32>>>,  c: &mut Vec<Vec<u32>>, n: usize, num_threads: usize) {                     
+fn multiplikation(a: Arc<Vec<Vec<u32>>>, b: Arc<Vec<Vec<u32>>>,  c: &mut Vec<Vec<u32>>, n: usize, num_threads: usize, pinnen: &Vec<CoreId>) {                     
 
     // Anzahl Zeilen pro Thread
     let zeilen_pro_thread: usize = n / num_threads;
@@ -38,8 +38,7 @@ fn multiplikation(a: Arc<Vec<Vec<u32>>>, b: Arc<Vec<Vec<u32>>>,  c: &mut Vec<Vec
         let a_zeiger: Arc<Vec<Vec<u32>>> = Arc::clone(&a);
         let b_zeiger: Arc<Vec<Vec<u32>>> = Arc::clone(&b);
 
-        // struct für Thread pinning
-        let kern: CoreId = CoreId { id: z };
+        let kern: CoreId = pinnen[z];
 
         // berechnet den Bereich [anfang,ende[ für jeden Thread
         let anfang: usize = z * zeilen_pro_thread + usize::min(z, rest);
@@ -87,7 +86,7 @@ fn multiplikation(a: Arc<Vec<Vec<u32>>>, b: Arc<Vec<Vec<u32>>>,  c: &mut Vec<Vec
 
 
 
-fn multiply(a: Arc<Vec<Vec<u32>>>, b: Arc<Vec<Vec<u32>>>, c: &mut Vec<Vec<u32>>, n: usize, num_threads: usize) {
+fn multiply(a: Arc<Vec<Vec<u32>>>, b: Arc<Vec<Vec<u32>>>, c: &mut Vec<Vec<u32>>, n: usize, num_threads: usize, pinnen: &Vec<CoreId>) {
     // scope ist notwendig um Threads mit veränderbaren Referenzen (&mut c) zu starten, ohne dass die Referenz statisch
     // sein muss  
     thread::scope(|s| {
@@ -113,8 +112,7 @@ fn multiply(a: Arc<Vec<Vec<u32>>>, b: Arc<Vec<Vec<u32>>>, c: &mut Vec<Vec<u32>>,
             let a_zeiger: Arc<Vec<Vec<u32>>> = Arc::clone(&a);
             let b_zeiger: Arc<Vec<Vec<u32>>> = Arc::clone(&b);
 
-            // Kern CoreId struct für pinning erzeugen 
-            let kern: CoreId = CoreId { id: z };
+            let kern = pinnen[z];
 
             // Spawn the thread, moving captured variables into the closure
             s.spawn(move || {
@@ -165,8 +163,14 @@ fn main() {
     // Eingabe ohne Programmname
     let argument: Vec<String> = std::env::args().skip(1).collect();
 
+    let test_args = vec![
+        "-n".to_string(), "30".to_string(),
+        "-b".to_string(), "1".to_string(),
+        "-d".to_string(),
+    ];
+
     // Nutzereingabe parsen
-    let (n, modus, datei, debug): (Vec<u32>, u32, String, bool) = verarbeiten::eingabe(&argument);
+    let (n, modus, datei, debug): (Vec<u32>, u32, String, bool) = verarbeiten::eingabe(&test_args);
 
     // Debug Eingabe
     if debug {
@@ -184,6 +188,15 @@ fn main() {
         println!("Einstellungen:\n-n: {:?}\n-b: {}\n-c: {}\n", n, s, datei);
     }
 
+    let prozessor: verarbeiten::ProzessorSpecs = verarbeiten::ProzessorSpecs::new();
+    if debug {
+        println!("\nProzessor Spezifikationen:
+            Name: {}
+            logische Kerne = {}
+            phsyische Kerne = {}
+            hyperthreading = {}\n", prozessor.name, prozessor.logisch, prozessor.physisch, prozessor.hyperthreading);
+    }
+
     // Speicherplatz reserverien
     let mut laufzeit: Vec<f64> = Vec::with_capacity(n.len());
 
@@ -198,7 +211,13 @@ fn main() {
 
     // Benchmark für alle Threads durchführen
     for i in 2..=threads {
-        println!("Benchmark mit {} Threads", i);     
+        println!("Benchmark mit {} Threads", i);    
+
+        let pinnen: Vec<CoreId> = verarbeiten::pinnen_liste(i, &prozessor); 
+        if debug {
+            let ids: Vec<usize> = pinnen.iter().map(|c| c.id).collect();
+            println!("pinnen auf Prozessor ids: {:?}", ids);
+        }
 
         // Benchmark für jeden Thread mit allen Größen in durchführen
         for j in 0..n.len()
@@ -221,10 +240,10 @@ fn main() {
             let start: Instant = Instant::now();
 
             if modus == 1 {
-                multiplikation(Arc::clone(&a_teilen), Arc::clone(&b_teilen),  &mut c,aktuell, i);
+                multiplikation(Arc::clone(&a_teilen), Arc::clone(&b_teilen),  &mut c,aktuell, i, &pinnen);
             }
             else if modus == 2 {
-                multiply(Arc::clone(&a_teilen), Arc::clone(&b_teilen), &mut c, aktuell, i);
+                multiply(Arc::clone(&a_teilen), Arc::clone(&b_teilen), &mut c, aktuell, i, &pinnen);
             }
 
             // Laufzeit in Millisekunden
@@ -234,11 +253,11 @@ fn main() {
             // Kontrolle ausgeben
             if debug {
                 single_matrixmultiplikation(&*a_teilen, &*b_teilen, &mut c_single, aktuell);
-                vergleich(&c_single, &c);
+                //vergleich(&c_single, &c);
             }
         }
         // Speichern der Ergebnisse eines Threads
-        verarbeiten::speichern(&datei, &n, &laufzeit, i);
+        verarbeiten::speichern(&datei, &n, &laufzeit, i, &prozessor);
 
         // Laufzeit zurücksetzen
         laufzeit.clear();
