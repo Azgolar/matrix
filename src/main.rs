@@ -192,27 +192,32 @@ fn main() {
 
     // Threads
     let threads: usize = get_core_ids().map(|cores| cores.len()).unwrap_or_else(|| -> usize {
-            eprintln!("Konnte logische Kerne nicht abfragen");
+            println!("Konnte logische Kerne nicht abfragen");
             process::exit(1);
         });
 
-    // Benchmarking für alle n durchführen
-    for i in 2..threads {                           
-        let aktuell: usize = n[i] as usize;
+    // Benchmark für alle Threads durchführen
+    for i in 2..=threads {
+        println!("Benchmark mit {} Threads", i);     
 
-        // Zufallsmatrizen erzeugen
-        let a: Vec<Vec<u32>> = zufall_matrix(aktuell, &mut zufall);
-        let b: Vec<Vec<u32>> = zufall_matrix(aktuell, &mut zufall);
+        // Benchmark für jeden Thread mit allen Größen in durchführen
+        for j in 0..n.len()
+        {
+        
+            let aktuell: usize = n[j] as usize;
 
-        // 2) wrap them in Arcs once, before benchmarking loop
-        let a_teilen: Arc<Vec<Vec<u32>>> = Arc::new(a);
-        let b_teilen: Arc<Vec<Vec<u32>>> = Arc::new(b);
+            // Zufallsmatrizen erzeugen
+            let a: Vec<Vec<u32>> = zufall_matrix(aktuell, &mut zufall);
+            let b: Vec<Vec<u32>> = zufall_matrix(aktuell, &mut zufall);
 
-        // leere Ergebnismatrizen erzeugen
-        let mut c_single: Vec<Vec<u32>> = vec![vec![0; aktuell]; aktuell];
-        let mut c: Vec<Vec<u32>> = vec![vec![0; aktuell]; aktuell];
+            // 2) wrap them in Arcs once, before benchmarking loop
+            let a_teilen: Arc<Vec<Vec<u32>>> = Arc::new(a);
+            let b_teilen: Arc<Vec<Vec<u32>>> = Arc::new(b);
 
-        for _ in 0..n.len() {
+            // leere Ergebnismatrizen erzeugen
+            let mut c_single: Vec<Vec<u32>> = vec![vec![0; aktuell]; aktuell];
+            let mut c: Vec<Vec<u32>> = vec![vec![0; aktuell]; aktuell];
+
             let start: Instant = Instant::now();
 
             if modus == 1 {
@@ -237,8 +242,6 @@ fn main() {
 
         // Laufzeit zurücksetzen
         laufzeit.clear();
-
-        println!("Benchmark Thread {} beendet", i);
     }
 }
 
