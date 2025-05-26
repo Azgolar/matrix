@@ -1,7 +1,7 @@
 mod verarbeiten;
 use rand::{Rng, SeedableRng, rngs::StdRng};
-use std::{thread, time::Instant, sync::Arc};
-use core_affinity::{CoreId, set_for_current};
+use std::{thread, process, time::Instant, sync::Arc};
+use core_affinity::{CoreId, get_core_ids, set_for_current};
 
 /*
     Single Thread
@@ -162,18 +162,11 @@ fn zufall_matrix(n: usize, rng: &mut StdRng) -> Vec<Vec<u32>> {
 }
 
 fn main() {
-    // let args: Vec<String> = std::env::args().collect();
-
-    // Test-Einstellungen
-    let test: Vec<String> = vec![
-        "-n".into(), "30".into(),
-        "-b".into(), "2".into(),
-        "-c".into(), "ergebnis".into(),
-        "-d".into(),
-    ];
+    // Eingabe ohne Programmname
+    let argument: Vec<String> = std::env::args().skip(1).collect();
 
     // Nutzereingabe parsen
-    let (n, modus, datei, debug): (Vec<u32>, u32, String, bool) = verarbeiten::eingabe(&test);
+    let (n, modus, datei, debug): (Vec<u32>, u32, String, bool) = verarbeiten::eingabe(&argument);
 
     // Debug Eingabe
     if debug {
@@ -198,13 +191,13 @@ fn main() {
     let mut zufall: StdRng = StdRng::seed_from_u64(0xDEADBEEFCAFEBABE);
 
     // Threads
-    //let threads: usize = get_core_ids().map(|cores| cores.len()).unwrap_or_else(|| {
-      //      println!("\nKonnte logische Kerne nicht abfragen\n");
-        //    process::exit(1);
-        //});
+    let threads: usize = get_core_ids().map(|cores| cores.len()).unwrap_or_else(|| -> usize {
+            eprintln!("Konnte logische Kerne nicht abfragen");
+            process::exit(1);
+        });
 
     // Benchmarking für alle n durchführen
-    for i in 2..6 {                           
+    for i in 2..threads {                           
         let aktuell: usize = n[i] as usize;
 
         // Zufallsmatrizen erzeugen
